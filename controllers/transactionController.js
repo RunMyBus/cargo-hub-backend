@@ -10,7 +10,8 @@ exports.getUserTransactions = async (req, res) => {
       requestContext.getOperatorId(),
       req.body.userId,
       parseInt(page),
-      parseInt(limit)
+      parseInt(limit),
+      requestContext.isSuperUser()
     );
 
     res.json({

@@ -1,229 +1,90 @@
 const Transaction = require('../models/Transaction');
+const Booking = require('../models/Booking');
+const CashTransfer = require('../models/CashTransfer');
 const mongoose = require('mongoose');
 
-exports.getTransactionsByOperator = async (operatorId, userId, page, limit) => {
+exports.getTransactionsByOperator = async (operatorId, userId, page, limit, isSuperUser = false) => {
   const skip = (page - 1) * limit;
-  
-  // Validate userId if provided - only use if it's a valid non-empty value
+
+  // Validate inputs
   const hasUserId = userId && userId.toString().trim() !== '' && mongoose.Types.ObjectId.isValid(userId);
-  const operatorObjectId = operatorId && mongoose.Types.ObjectId.isValid(operatorId)
-    ? new mongoose.Types.ObjectId(operatorId)
-    : null;
+  const hasOperatorId = !isSuperUser && operatorId && mongoose.Types.ObjectId.isValid(operatorId);
 
-  const aggregationPipeline = [
-    {
-      $match: {
-        type: { $in: ['Booking', 'Transfer', 'Delivered'] } // ✅ include Delivered
-      }
-    },
+  // ── 1. Get Booking IDs (scoped to operator unless SuperUser) ─────────────
+  const bookingFilter = hasOperatorId ? { operatorId } : {};
+  const operatorBookings = await Booking.find(bookingFilter).select('_id').lean();
+  const operatorBookingIds = operatorBookings.map(b => b._id);
 
-    // Lookup booking if it's a Booking or Delivered type
-    {
-      $lookup: {
-        from: 'bookings',
-        localField: 'referenceId',
-        foreignField: '_id',
-        as: 'booking'
-      }
-    },
-    { $unwind: { path: '$booking', preserveNullAndEmptyArrays: true } },
+  // ── 2. Get CashTransfer IDs (approved, scoped to operator unless SuperUser)
+  const cashTransferFilter = hasOperatorId
+    ? { operatorId, status: 'Approved' }
+    : { status: 'Approved' };
+  const approvedTransfers = await CashTransfer.find(cashTransferFilter).select('_id').lean();
+  const approvedTransferIds = approvedTransfers.map(ct => ct._id);
 
-    // Lookup cash transfer if it's a Transfer type
-    {
-      $lookup: {
-        from: 'cashtransfers',
-        localField: 'cashTransferId',
-        foreignField: '_id',
-        as: 'cashTransfer'
-      }
-    },
-    { $unwind: { path: '$cashTransfer', preserveNullAndEmptyArrays: true } },
+  // ── 3. Build the base query ───────────────────────────────────────────────
+  const baseQuery = {
+    $or: [
+      { type: { $in: ['Booking', 'Delivered'] }, referenceId: { $in: operatorBookingIds } },
+      { type: 'Transfer', cashTransferId: { $in: approvedTransferIds } }
+    ]
+  };
 
-    // Filter based on operator or approval status
-    {
-      $match: {
-        $or: [
-          operatorObjectId
-            ? {
-                type: { $in: ['Booking', 'Delivered'] },
-                'booking.operatorId': operatorObjectId
-              }
-            : { type: { $in: ['Booking', 'Delivered'] } },
-          {
-            type: 'Transfer',
-            'cashTransfer.status': 'Approved'
-          }
-        ]
-      }
-    },
+  // Optionally narrow down to a specific user
+  if (hasUserId) {
+    baseQuery.user = new mongoose.Types.ObjectId(userId);
+  }
 
-    // Filter by userId if provided
-    ...(hasUserId ? [{
-      $match: {
-        $or: [
-          { user: new mongoose.Types.ObjectId(userId) }
-        ]
-      }
-    }] : []),
+  // ── 4. Fetch transactions with populate ───────────────────────────────────
+  const transactions = await Transaction.find(baseQuery)
+    .populate({
+      path: 'referenceId',
+      select: 'bookingId bookedBy',
+      populate: { path: 'bookedBy', select: 'fullName' }
+    })
+    .populate('fromUser', 'fullName')
+    .populate('toUser', 'fullName')
+    .sort({ createdAt: -1 })
+    .lean();
 
-    // Lookup users
-    {
-      $lookup: {
-        from: 'users',
-        localField: 'booking.bookedBy',
-        foreignField: '_id',
-        as: 'bookedUser'
-      }
-    },
-    { $unwind: { path: '$bookedUser', preserveNullAndEmptyArrays: true } },
+  // ── 5. Shape each transaction ─────────────────────────────────────────────
+  const shaped = transactions.map(tx => {
+    const booking = tx.referenceId;
+    const oldBalance = tx.balanceAfter - tx.amount;
 
-    {
-      $lookup: {
-        from: 'users',
-        localField: 'fromUser',
-        foreignField: '_id',
-        as: 'fromUserObj'
-      }
-    },
-    { $unwind: { path: '$fromUserObj', preserveNullAndEmptyArrays: true } },
+    let description = '';
+    if (tx.type === 'Booking') {
+      const bookedByName = booking?.bookedBy?.fullName || 'Unknown';
+      description = `Cargo Booking : ${booking?.bookingId} by ${bookedByName} has been posted for amount of ₹${tx.amount}`;
+    } else if (tx.type === 'Delivered') {
+      description = `Delivery : Booking ${booking?.bookingId} marked delivered and paid ₹${tx.amount}`;
+    } else {
+      const fromName = tx.fromUser?.fullName || 'Unknown';
+      const toName = tx.toUser?.fullName || 'Unknown';
+      description = `Cash Transfer of ₹${tx.amount} from ${fromName} to ${toName}`;
+    }
 
-    {
-      $lookup: {
-        from: 'users',
-        localField: 'toUser',
-        foreignField: '_id',
-        as: 'toUserObj'
-      }
-    },
-    { $unwind: { path: '$toUserObj', preserveNullAndEmptyArrays: true } },
+    return {
+      _id: tx._id,
+      amount: tx.amount,
+      balanceAfter: tx.balanceAfter,
+      type: tx.type,
+      createdAt: tx.createdAt,
+      oldBalance,
+      bookingId: booking?.bookingId || null,
+      bookedByName: booking?.bookedBy?.fullName || null,
+      fromUserName: tx.fromUser?.fullName || null,
+      toUserName: tx.toUser?.fullName || null,
+      description
+    };
+  });
 
-    // Add oldBalance field
-    {
-      $addFields: {
-        oldBalance: { $subtract: ['$balanceAfter', '$amount'] }
-      }
-    },
-
-    // Final projection
-    {
-      $project: {
-        _id: 1,
-        amount: 1,
-        balanceAfter: 1,
-        oldBalance: 1,
-        createdAt: 1,
-        type: 1,
-        bookingId: '$booking.bookingId',
-        bookedByName: '$bookedUser.fullName',
-        fromUserName: '$fromUserObj.fullName',
-        toUserName: '$toUserObj.fullName',
-        description: {
-          $switch: {
-            branches: [
-              {
-                case: { $eq: ['$type', 'Booking'] },
-                then: {
-                  $concat: [
-                    'Cargo Booking : ',
-                    { $toString: '$booking.bookingId' },
-                    ' by ',
-                    { $ifNull: ['$bookedUser.fullName', 'Unknown'] },
-                    ' has been posted for amount of ₹',
-                    { $toString: '$amount' }
-                  ]
-                }
-              },
-              {
-                case: { $eq: ['$type', 'Delivered'] },
-                then: {
-                  $concat: [
-                    'Delivery : Booking ',
-                    { $toString: '$booking.bookingId' },
-                    ' marked delivered and paid ₹',
-                    { $toString: '$amount' }
-                  ]
-                }
-              }
-            ],
-            default: {
-              $concat: [
-                'Cash Transfer of ₹',
-                { $toString: '$amount' },
-                ' from ',
-                { $ifNull: ['$fromUserObj.fullName', 'Unknown'] },
-                ' to ',
-                { $ifNull: ['$toUserObj.fullName', 'Unknown'] }
-              ]
-            }
-          }
-        }
-      }
-    },
-
-    // Sort by creation date in descending order (newest first)
-    { $sort: { createdAt: -1 } },
-    { $skip: skip },
-    { $limit: limit }
-  ];
-
-  const results = await Transaction.aggregate(aggregationPipeline);
-
-  // Count aggregation (also includes Delivered now)
-  const countAggregationPipeline = [
-    {
-      $match: {
-        type: { $in: ['Booking', 'Transfer', 'Delivered'] }
-      }
-    },
-    {
-      $lookup: {
-        from: 'bookings',
-        localField: 'referenceId',
-        foreignField: '_id',
-        as: 'booking'
-      }
-    },
-    { $unwind: { path: '$booking', preserveNullAndEmptyArrays: true } },
-    {
-      $lookup: {
-        from: 'cashtransfers',
-        localField: 'cashTransferId',
-        foreignField: '_id',
-        as: 'cashTransfer'
-      }
-    },
-    { $unwind: { path: '$cashTransfer', preserveNullAndEmptyArrays: true } },
-    {
-      $match: {
-        $or: [
-          {
-            type: { $in: ['Booking', 'Delivered'] },
-            'booking.operatorId': new mongoose.Types.ObjectId(operatorId)
-          },
-          {
-            type: 'Transfer',
-            'cashTransfer.status': 'Approved'
-          }
-        ]
-      }
-    },
-    // Filter by userId if provided
-    ...(hasUserId ? [{
-      $match: {
-        $or: [
-          { user: new mongoose.Types.ObjectId(userId) }
-        ]
-      }
-    }] : []),
-    { $count: 'total' }
-  ];
-
-  const countAggregation = await Transaction.aggregate(countAggregationPipeline);
-
-  const totalCount = countAggregation[0]?.total || 0;
+  // ── 6. Paginate in JavaScript ─────────────────────────────────────────────
+  const totalCount = shaped.length;
+  const paginated = shaped.slice(skip, skip + limit);
 
   return {
-    transactions: results,
+    transactions: paginated,
     totalCount
   };
 };

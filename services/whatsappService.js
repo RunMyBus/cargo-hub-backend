@@ -15,9 +15,9 @@ let CONVO_API_URL = config.WHATSAPP_CONVERSATION_URL;
 // Helper to get effective config
 const getEffectiveConfig = (operatorConfig) => {
     return {
-        apiKey: operatorConfig?.apiKey,
-        phoneNumber: operatorConfig?.phoneNumber,
-        feedbackTemplateName: operatorConfig?.feedbackTemplateName
+        apiKey: operatorConfig?.apiKey || config.WHATSAPP_API_TOKEN,
+        phoneNumber: operatorConfig?.phoneNumber || config.NETCORE_PHONE_NUMBER,
+        feedbackTemplateName: operatorConfig?.feedbackTemplateName || config.FEEDBACK_REQUEST
     };
 };
 
@@ -118,16 +118,18 @@ async function sendWhatsAppTemplateMessage(mobile, templateName, attributes, med
  * @param {string} message - The WhatsApp message content
  * @param {object} bookingReferenceData - The cargo booking object
  * @param {object} response - Response from WhatsApp API
- * @param bookingReference
+ * @param {string} bookingReference - Reference type constant
  * @param {object} operatorConfig - Operator specific whatsapp config
+ * @param {string|null} lastSentMessageId - ncmessage_id from the API response, stored for reply matching
  * @returns {Promise<object>} - Promise that resolves with success/error status
  */
-async function saveWhatsAppConversations(message, bookingReferenceData, response, bookingReference, operatorConfig = {}) {
+async function saveWhatsAppConversations(message, bookingReferenceData, response, bookingReference, operatorConfig = {}, lastSentMessageId = null) {
     logger.info('Saving WhatsApp conversation', {
         message,
         bookingId: bookingReferenceData?.id,
         hasResponse: !!response,
-        bookingReference: bookingReference
+        bookingReference: bookingReference,
+        lastSentMessageId
     });
 
     const effectiveConfig = getEffectiveConfig(operatorConfig);
@@ -157,6 +159,7 @@ async function saveWhatsAppConversations(message, bookingReferenceData, response
             if (bookingReferenceData?.fromCity) existingConversation.fromCities.push(bookingReferenceData.fromCity);
             if (bookingReferenceData?.toCity) existingConversation.toCities.push(bookingReferenceData.toCity);
             if (bookingReferenceData?.travelDates) existingConversation.travelDates.push(bookingReferenceData.travelDates);
+            if (lastSentMessageId) existingConversation.lastSentMessageId = lastSentMessageId;
             await existingConversation.save();
         } else {
             const pnrs = [];
@@ -178,7 +181,8 @@ async function saveWhatsAppConversations(message, bookingReferenceData, response
                 travelDates,
                 replyPending: false,
                 operatorId: bookingReferenceData?.operatorId,
-                referenceType: bookingReference
+                referenceType: bookingReference,
+                lastSentMessageId: lastSentMessageId || null
             });
             await newConversation.save();
         }

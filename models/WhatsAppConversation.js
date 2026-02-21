@@ -17,6 +17,7 @@ const whatsappConversationSchema = new mongoose.Schema({
   name: { type: String },
   lastMessage: { type: String },
   lastMessageDateTime: { type: Date },
+  lastSentMessageId: { type: String, index: true }, // ncmessage_id of the last outgoing template
   operatorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Operator' },
 }, {
   timestamps: true
