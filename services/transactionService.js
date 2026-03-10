@@ -100,7 +100,12 @@ exports.getTransactionsByOperator = async (operatorId, userId, page, limit) => {
     // Add oldBalance field
     {
       $addFields: {
-        oldBalance: { $subtract: ['$balanceAfter', '$amount'] }
+        oldBalance: {
+          $ifNull: [
+            '$oldBalance',
+            { $subtract: ['$balanceAfter', '$amount'] }
+          ]
+        }
       }
     },
 
@@ -146,14 +151,40 @@ exports.getTransactionsByOperator = async (operatorId, userId, page, limit) => {
               }
             ],
             default: {
-              $concat: [
-                'Cash Transfer of ₹',
-                { $toString: '$amount' },
-                ' from ',
-                { $ifNull: ['$fromUserObj.fullName', 'Unknown'] },
-                ' to ',
-                { $ifNull: ['$toUserObj.fullName', 'Unknown'] }
-              ]
+              $cond: {
+                if: { $eq: ['$user', '$fromUser'] },
+                then: {
+                  $concat: [
+                    'Cash transfer of ₹',
+                    { $toString: '$amount' },
+                    ' sent to ',
+                    { $ifNull: ['$toUserObj.fullName', 'Unknown'] }
+                  ]
+                },
+                else: {
+                  $cond: {
+                    if: { $eq: ['$user', '$toUser'] },
+                    then: {
+                      $concat: [
+                        'Cash transfer of ₹',
+                        { $toString: '$amount' },
+                        ' received from ',
+                        { $ifNull: ['$fromUserObj.fullName', 'Unknown'] }
+                      ]
+                    },
+                    else: {
+                      $concat: [
+                        'Cash transfer of ₹',
+                        { $toString: '$amount' },
+                        ' from ',
+                        { $ifNull: ['$fromUserObj.fullName', 'Unknown'] },
+                        ' to ',
+                        { $ifNull: ['$toUserObj.fullName', 'Unknown'] }
+                      ]
+                    }
+                  }
+                }
+              }
             }
           }
         }

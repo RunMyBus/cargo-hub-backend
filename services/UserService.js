@@ -328,16 +328,19 @@ class UserService {
     try {
       const regex = new RegExp(query, "i");
       const skip = (page - 1) * limit;
-      const queryObj = query ? { 
-        $or: [
-          { fullName: regex },
-          { mobile: regex }
-        ]
-      } : {};
+      
       
     // For SuperUser, don't filter by operatorId (ignore operatorId from payload)
-    const baseQuery = isSuperUser ? queryObj : { operatorId, ...queryObj };
-      
+    let operatorIdToUse = operatorId || operatorIdFromPayload;
+    const queryObj = query ? { 
+      $or: [
+        { fullName: regex },
+        { mobile: regex }
+      ]
+    } : {};
+    const baseQuery = isSuperUser ? queryObj : { operatorId:operatorIdToUse, ...queryObj };
+    logger.info('Base query', { baseQuery }); 
+
       const [total, users] = await Promise.all([
         User.countDocuments(baseQuery),
         User.find(baseQuery)
@@ -378,7 +381,7 @@ class UserService {
    * Add amount to user's cargo balance
    * @param {string} userId - User ID
    * @param {number} amount - Amount to add to cargo balance
-   * @returns {Promise<Object>} Updated user with new balance
+   * @returns {Promise<Object>} Balance update details
    */
   static async addToCargoBalance(userId, amount) {
     logger.info('Adding amount to cargo balance', { userId, amount });
@@ -406,7 +409,11 @@ class UserService {
         newBalance
       });
 
-      return updatedUser;
+      return {
+        user: updatedUser,
+        oldBalance,
+        newBalance
+      };
     } catch (error) {
       logger.error('Error adding to cargo balance', {
         error: error.message,
