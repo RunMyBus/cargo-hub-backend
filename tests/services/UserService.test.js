@@ -109,3 +109,24 @@ describe('UserService.createUser', () => {
       .rejects.toThrow('Invalid role ID');
   });
 });
+
+describe('UserService.addToCargoBalance', () => {
+  it('should return old and new balances and update user balance', async () => {
+    const operatorId = new mongoose.Types.ObjectId();
+    const user = await User.create({
+      fullName: 'Balance User',
+      mobile: '7777777777',
+      operatorId,
+      cargoBalance: 100
+    });
+
+    const result = await UserService.addToCargoBalance(user._id, 50);
+
+    expect(result.oldBalance).toBe(100);
+    expect(result.newBalance).toBe(150);
+    expect(result.user.cargoBalance).toBe(150);
+
+    const refreshed = await User.findById(user._id);
+    expect(refreshed.cargoBalance).toBe(150);
+  });
+});

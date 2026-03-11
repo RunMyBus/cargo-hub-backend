@@ -187,6 +187,8 @@ static async getCashTransfers(operatorId, status, { page, limit }, user) {
         }
 
         // Update balances
+        const fromOldBalance = fromUser.cargoBalance || 0;
+        const toOldBalance = toUser.cargoBalance || 0;
         fromUser.cargoBalance -= transfer.amount;
         toUser.cargoBalance = (toUser.cargoBalance || 0) + transfer.amount;
 
@@ -198,21 +200,23 @@ static async getCashTransfers(operatorId, status, { page, limit }, user) {
             fromUser: fromUser._id,
             toUser: toUser._id,
             amount: transfer.amount,
-            oldBalance: (fromUser.cargoBalance+transfer.amount),
+            oldBalance: fromOldBalance,
             balanceAfter: fromUser.cargoBalance,
             type: 'Transfer',
-            description: `Cash Transfer of ₹${transfer.amount} sent from ${fromUser.fullName} to ${toUser.fullName}`,
+            description: `Cash transfer of ₹${transfer.amount} sent to ${toUser.fullName}`,
             referenceId: null,
             cashTransferId: transfer._id, 
         });
         //  Create a Transaction document
         await Transaction.create({
             user: toUser._id, 
-            oldBalance: (toUser.cargoBalance-transfer.amount),
+            fromUser: fromUser._id,
+            toUser: toUser._id,
+            oldBalance: toOldBalance,
             amount: transfer.amount,
             balanceAfter: toUser.cargoBalance,
             type: 'Transfer',
-            description: `Cash Transfer of ₹${transfer.amount} recieved from ${fromUser.fullName} to ${toUser.fullName}`,
+            description: `Cash transfer of ₹${transfer.amount} received from ${fromUser.fullName}`,
             referenceId: null,
             cashTransferId: transfer._id, 
         });

@@ -267,23 +267,24 @@ class BookingService {
       // Only update cargo balance for 'Paid' bookings
       if (booking.lrType === 'Paid') {
         const amount = booking.totalAmountCharge || 0;
-        const updatedUser = await UserService.addToCargoBalance(userId, amount);
+        const { user: updatedUser, oldBalance, newBalance } = await UserService.addToCargoBalance(userId, amount);
 
         // Create a transaction record
         await Transaction.create({
           user: userId,
           amount,
-          balanceAfter: updatedUser.cargoBalance,
+          oldBalance,
+          balanceAfter: newBalance,
           type: 'Booking',
-          referenceId: booking._id,
-          description: 'Cargo balance updated from Paid booking'
+          referenceId: booking._id, //include the booking id and the amount
+          description: `Cargo balance updated from Paid booking: ${booking.bookingId} for amount: ${amount}`
         });
 
         logger.info('Cargo balance updated for Paid booking', {
           bookingId: booking._id,
           userId,
           amount,
-          newBalance: updatedUser.cargoBalance
+          newBalance
         });
       } else {
         logger.info('ToPay booking — cargo balance not updated', {
@@ -1061,15 +1062,18 @@ class BookingService {
       let finalUser = user;
       if(booking.lrType === 'ToPay') {
         const amount = booking.totalAmountCharge || 0;
-        finalUser = await UserService.addToCargoBalance(userId, amount);
+        const { user: updatedUser, oldBalance, newBalance } = await UserService.addToCargoBalance(userId, amount);
+        finalUser = updatedUser;
 
         await Transaction.create({
           user: userId,
           amount: amount,
-          balanceAfter: finalUser.cargoBalance,
+          oldBalance,
+          balanceAfter: newBalance,
           type: 'Delivered',
           referenceId: booking._id,
-          description: `Cargo balance updated from delivery (${updateData.paymentType} payment)`
+          description: `Cargo balance updated from delivery (${updateData.paymentType} payment): ${booking.bookingId} for amount: ${amount}`  
+        
         });
       }
 

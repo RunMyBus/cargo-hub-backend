@@ -387,7 +387,7 @@ class UserService {
    * Add amount to user's cargo balance
    * @param {string} userId - User ID
    * @param {number} amount - Amount to add to cargo balance
-   * @returns {Promise<Object>} Updated user with new balance
+   * @returns {Promise<Object>} Balance update details
    */
   static async addToCargoBalance(userId, amount) {
     logger.info('Adding amount to cargo balance', { userId, amount });
@@ -415,7 +415,11 @@ class UserService {
         newBalance
       });
 
-      return updatedUser;
+      return {
+        user: updatedUser,
+        oldBalance,
+        newBalance
+      };
     } catch (error) {
       logger.error('Error adding to cargo balance', {
         error: error.message,
