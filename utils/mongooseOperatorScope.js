@@ -38,7 +38,10 @@ module.exports = function operatorScope(schema) {
     const applyOperatorFilter = function () {
         const existingFilter = this.getFilter();
         if (requestContext.isSuperUser()) {
-            if (existingFilter && Object.prototype.hasOwnProperty.call(existingFilter, 'operatorId')) {
+            // If caller explicitly passed operatorId (e.g. SuperUser filtering by a specific
+            // operator from the request payload), leave it intact.
+            const isExplicit = this.getOptions()._explicitOperatorId;
+            if (!isExplicit && existingFilter && Object.prototype.hasOwnProperty.call(existingFilter, 'operatorId')) {
                 delete existingFilter.operatorId;
             }
             return;

@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Role = require('../models/Role');
 const Branch = require('../models/Branch');
@@ -335,12 +336,20 @@ class UserService {
         ]
       } : {};
       
-    // For SuperUser, don't filter by operatorId (ignore operatorId from payload)
-    const baseQuery = isSuperUser ? queryObj : { operatorId, ...queryObj };
+      const rawOperatorId = isSuperUser ? operatorIdFromPayload : operatorId;
+      const effectiveOperatorId = rawOperatorId
+        ? new mongoose.Types.ObjectId(rawOperatorId)
+        : null;
+      const baseQuery = effectiveOperatorId
+        ? { operatorId: effectiveOperatorId, ...queryObj }
+        : queryObj;
       
+      // Signal to mongooseOperatorScope plugin to preserve this operatorId filter
+      const queryOptions = effectiveOperatorId ? { _explicitOperatorId: true } : {};
+
       const [total, users] = await Promise.all([
-        User.countDocuments(baseQuery),
-        User.find(baseQuery)
+        User.countDocuments(baseQuery, queryOptions),
+        User.find(baseQuery, null, queryOptions)
           .populate("role")
           .populate("operatorId", "_id name")
           .populate("branchId", "_id name")
